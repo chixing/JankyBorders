@@ -30,6 +30,18 @@ static bool border_check_too_small(struct border* border, CGRect window_frame) {
   return false;
 }
 
+// A fully transparent solid border draws nothing, so its window (and a backing
+// store as large as the target window) can be released until it is visible again.
+static bool border_is_invisible(struct border* border, struct settings* settings) {
+  struct color_style style = border->focused ? settings->active_window
+                                             : settings->inactive_window;
+  return style.stype == COLOR_STYLE_SOLID
+         && !(style.color >> 24)
+         && !settings->show_background
+         && !border->is_proxy
+         && !border->proxy;
+}
+
 static bool border_calculate_bounds(struct border* border, CGRect* frame, struct settings* settings) {
   CGRect window_frame;
   if (border->is_proxy) window_frame = border->target_bounds;
@@ -192,6 +204,11 @@ void border_update_internal(struct border* border, struct settings* settings) {
     return;
   } 
 
+  if (border_is_invisible(border, settings)) {
+    border_destroy_window(border);
+    return;
+  }
+
   int level = window_level(cid, border->target_wid);
   int sub_level = window_sub_level(cid, border->target_wid);
 
@@ -305,7 +322,7 @@ void border_destroy(struct border* border) {
 
 void border_move(struct border* border) {
   pthread_mutex_lock(&border->mutex);
-  if (border->external_proxy_wid) {
+  if (border->external_proxy_wid || !border->wid) {
     pthread_mutex_unlock(&border->mutex);
     return;
   }

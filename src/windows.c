@@ -373,4 +373,6 @@ void windows_add_existing_windows(struct table* windows) {
   }
   CFRelease(space_list_ref);
   free(space_list);
+
+  windows_determine_and_focus_active_window(windows);
 }
