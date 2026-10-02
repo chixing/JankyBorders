@@ -244,6 +244,11 @@ void windows_determine_and_focus_active_window(struct table* windows) {
                        : get_front_window(cid);
 
   debug("Front window: %d\n", front_wid);
+  windows_focus_window(windows, front_wid);
+}
+
+void windows_focus_window(struct table* windows, uint32_t front_wid) {
+  int cid = SLSMainConnectionID();
   if (!windows_window_focus(windows, front_wid)) {
     debug("Taking slow window focus path: %d\n", front_wid);
     if (front_wid && windows_window_create(windows,

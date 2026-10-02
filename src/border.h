@@ -31,6 +31,7 @@ struct color_style {
 struct settings {
   bool enabled;
   uint32_t apply_to;
+  uint32_t focus;
 
   struct color_style active_window;
   struct color_style inactive_window;

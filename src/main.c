@@ -77,6 +77,13 @@ static void message_handler(void* data, uint32_t len) {
     message += strlen(message) + 1;
   }
 
+  // Pushed by the window manager (e.g. a yabai window_focused signal): faster
+  // than querying the front window ourselves, and right for same-app windows.
+  if (settings.focus) {
+    windows_focus_window(&g_windows, settings.focus);
+    return;
+  }
+
   if (settings.apply_to > 0) {
     struct border* border = table_find(&g_windows, &settings.apply_to);
     if (border) {

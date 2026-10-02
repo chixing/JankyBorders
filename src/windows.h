@@ -18,4 +18,5 @@ bool windows_window_destroy(struct table* windows, uint32_t wid, uint32_t sid);
 void windows_add_existing_windows(struct table* windows);
 void windows_draw_borders_on_current_spaces(struct table* windows);
 void windows_determine_and_focus_active_window(struct table* windows);
+void windows_focus_window(struct table* windows, uint32_t wid);
 void windows_recreate_all_borders(struct table* windows);
