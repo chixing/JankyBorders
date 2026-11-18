@@ -8,6 +8,8 @@
 extern pid_t g_pid;
 extern struct settings g_settings;
 
+static uint32_t focused_wid;
+
 // Loaded via dlsym in main.c
 extern CFArrayRef (*JBSLSWindowIteratorGetCornerRadii)(CFTypeRef);
 
@@ -28,7 +30,7 @@ static bool app_allowed(struct settings* settings, char* app_name) {
   return true;
 }
 
-bool windows_window_create(struct table* windows, uint32_t wid, uint64_t sid) {
+static bool windows_track_window(struct table* windows, uint32_t wid, uint64_t sid) {
   bool window_created = false;
   int cid = SLSMainConnectionID();
   int wid_cid = 0;
@@ -79,7 +81,6 @@ bool windows_window_create(struct table* windows, uint32_t wid, uint64_t sid) {
           border->target_wid = wid;
           border->sid = sid;
           border_update(border, false);
-          windows_update_notifications(windows);
         }
       }
     }
@@ -91,7 +92,14 @@ bool windows_window_create(struct table* windows, uint32_t wid, uint64_t sid) {
   return window_created;
 }
 
+bool windows_window_create(struct table* windows, uint32_t wid, uint64_t sid) {
+  bool added = windows_track_window(windows, wid, sid);
+  if (added) windows_update_notifications(windows);
+  return added;
+}
+
 static void windows_remove_all(struct table* windows) {
+  focused_wid = 0;
   for (int i = 0; i < windows->capacity; ++i) {
     struct bucket* bucket = windows->buckets[i];
     while (bucket) {
@@ -128,18 +136,10 @@ void windows_update_all(struct table* windows) {
 }
 
 void windows_update_active(struct table* windows) {
-  for (int i = 0; i < windows->capacity; ++i) {
-    struct bucket* bucket = windows->buckets[i];
-    while (bucket) {
-      if (bucket->value) {
-        struct border* border = bucket->value;
-        if (border && border->focused) {
-          border->needs_redraw = true;
-          border_update(border, true);
-        }
-      }
-      bucket = bucket->next;
-    }
+  struct border* border = table_find(windows, &focused_wid);
+  if (border) {
+    border->needs_redraw = true;
+    border_update(border, true);
   }
 }
 
@@ -165,31 +165,23 @@ void windows_window_update(struct table* windows, uint32_t wid) {
 }
 
 static bool windows_window_focus(struct table* windows, uint32_t wid) {
-  bool found_window = false;
-  for (int i = 0; i < windows->capacity; ++i) {
-    struct bucket* bucket = windows->buckets[i];
-    while (bucket) {
-      if (bucket->value) {
-        struct border* border = bucket->value;
-        if (border->focused && border->target_wid != wid) {
-          border->focused = false;
-          border->needs_redraw = true;
-          border_update(border, true);
-        }
+  if (wid == focused_wid) return wid != 0;
 
-        if (!border->focused && border->target_wid == wid) {
-          border->focused = true;
-          border->needs_redraw = true;
-          border_update(border, true);
-        }
-
-        if (border->target_wid == wid) found_window = true;
-      }
-      bucket = bucket->next;
-    }
+  struct border* previous = table_find(windows, &focused_wid);
+  if (previous) {
+    previous->focused = false;
+    previous->needs_redraw = true;
+    border_update(previous, true);
   }
 
-  return found_window;
+  struct border* next = table_find(windows, &wid);
+  focused_wid = next ? wid : 0;
+  if (next) {
+    next->focused = true;
+    next->needs_redraw = true;
+    border_update(next, true);
+  }
+  return next != NULL;
 }
 
 void windows_window_move(struct table* windows, uint32_t wid) {
@@ -210,6 +202,7 @@ void windows_window_unhide(struct table* windows, uint32_t wid) {
 bool windows_window_destroy(struct table* windows, uint32_t wid, uint32_t sid) {
   struct border* border = table_find(windows, &wid);
   if (border && (border->sid == sid || border->sticky || sid == 0)) {
+    if (wid == focused_wid) focused_wid = 0;
     table_remove(windows, &wid);
     border_destroy(border);
     windows_update_notifications(windows);
@@ -220,7 +213,15 @@ bool windows_window_destroy(struct table* windows, uint32_t wid, uint32_t sid) {
 
 void windows_update_notifications(struct table* windows) {
   int window_count = 0;
-  uint32_t window_list[1024] = {};
+  uint32_t local_ids[128];
+  uint32_t* window_list = local_ids;
+  if (windows->count > (int)(sizeof(local_ids) / sizeof(local_ids[0]))) {
+    window_list = malloc(sizeof(*window_list) * windows->count);
+    if (!window_list) {
+      fprintf(stderr, "borders: unable to allocate window notification list\n");
+      return;
+    }
+  }
 
   for (int i = 0; i < windows->capacity; ++i) {
     struct bucket *bucket = windows->buckets[i];
@@ -235,6 +236,7 @@ void windows_update_notifications(struct table* windows) {
 
   int cid = SLSMainConnectionID();
   SLSRequestNotificationsForWindows(cid, window_list, window_count);
+  if (window_list != local_ids) free(window_list);
 }
 
 void windows_determine_and_focus_active_window(struct table* windows) {
@@ -248,14 +250,12 @@ void windows_determine_and_focus_active_window(struct table* windows) {
 }
 
 void windows_focus_window(struct table* windows, uint32_t front_wid) {
+  if (windows_window_focus(windows, front_wid) || !front_wid) return;
+
   int cid = SLSMainConnectionID();
-  if (!windows_window_focus(windows, front_wid)) {
-    debug("Taking slow window focus path: %d\n", front_wid);
-    if (front_wid && windows_window_create(windows,
-                                           front_wid,
-                                           window_space_id(cid, front_wid))) {
-      windows_window_focus(windows, front_wid);
-    }
+  debug("Taking slow window focus path: %d\n", front_wid);
+  if (windows_window_create(windows, front_wid, window_space_id(cid, front_wid))) {
+    windows_window_focus(windows, front_wid);
   }
 }
 
@@ -366,7 +366,7 @@ void windows_add_existing_windows(struct table* windows) {
       while (SLSWindowIteratorAdvance(iterator)) {
         if (window_suitable(iterator)) {
           uint32_t wid = SLSWindowIteratorGetWindowID(iterator);
-          windows_window_create(windows, wid, window_space_id(cid, wid));
+          windows_track_window(windows, wid, window_space_id(cid, wid));
         }
       }
 
