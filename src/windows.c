@@ -287,6 +287,7 @@ void windows_draw_borders_on_current_spaces(struct table* windows) {
                                                             &set_tags,
                                                             &clear_tags    );
 
+  bool added_windows = false;
   if (window_list) {
     CFTypeRef query = SLSWindowQueryWindows(cid, window_list, 0x0);
     if (query) {
@@ -299,7 +300,9 @@ void windows_draw_borders_on_current_spaces(struct table* windows) {
             if (border) border_update(border, true);
             else {
               debug("Creating Missing Window: %d\n", wid);
-              windows_window_create(windows, wid, window_space_id(cid, wid));
+              if (windows_track_window(windows, wid, window_space_id(cid, wid))) {
+                added_windows = true;
+              }
             }
           }
         }
@@ -310,6 +313,7 @@ void windows_draw_borders_on_current_spaces(struct table* windows) {
     CFRelease(window_list);
   }
   CFRelease(space_list_ref);
+  if (added_windows) windows_update_notifications(windows);
 }
 
 void windows_add_existing_windows(struct table* windows) {
