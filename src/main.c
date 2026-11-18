@@ -90,7 +90,7 @@ static void message_handler(void* data, uint32_t len) {
       border->setting_override = settings;
       border->setting_override.enabled = true;
       border->needs_redraw = true;
-      border_update(border, true);
+      border_update(border, NULL);
     }
     return;
   } else {
@@ -114,7 +114,7 @@ static void message_handler(void* data, uint32_t len) {
                 && !((update_mask & BORDER_UPDATE_MASK_ALL)
                      || (update_mask & BORDER_UPDATE_MASK_RECREATE_ALL))) {
               border->needs_redraw = true;
-              border_update(border, true);
+              border_update(border, NULL);
             }
           }
         }

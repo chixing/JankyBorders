@@ -95,7 +95,7 @@ struct border* border_create();
 void border_destroy(struct border* border);
 
 void border_move(struct border* border);
-void border_update(struct border* border, bool try_async);
+void border_update(struct border* border, CFTypeRef iterator);
 void border_hide(struct border* border);
 void border_unhide(struct border* border);
 

@@ -185,14 +185,14 @@ void border_create_window(struct border* border, CGRect frame, bool unmanaged, b
   pthread_mutex_unlock(&border->mutex);
 }
 
-void border_update_internal(struct border* border, struct settings* settings) {
+void border_update_internal(struct border* border, struct settings* settings, CFTypeRef iterator) {
   if (border->external_proxy_wid) return;
 
   int cid = border->cid;
   CGRect frame;
   if (!border_calculate_bounds(border, &frame, settings)) return;
 
-  uint64_t tags = window_tags(cid, border->target_wid);
+  uint64_t tags = iterator ? SLSWindowIteratorGetTags(iterator) : window_tags(cid, border->target_wid);
   border->sticky = tags & WINDOW_TAG_STICKY;
   // Release the old outline before its Space can become visible again.
   if (border_is_invisible(border, settings)) {
@@ -209,7 +209,7 @@ void border_update_internal(struct border* border, struct settings* settings) {
     return;
   } 
 
-  int level = window_level(cid, border->target_wid);
+  int level = iterator ? SLSWindowIteratorGetLevel(iterator) : window_level(cid, border->target_wid);
   int sub_level = window_sub_level(cid, border->target_wid);
 
   if (!border->wid) {
@@ -218,6 +218,9 @@ void border_update_internal(struct border* border, struct settings* settings) {
                          border->is_proxy,
                          settings->hidpi  );
   }
+
+  CFTypeRef transaction = SLSTransactionCreate(cid);
+  if (!transaction) return;
 
   bool disabled_update = false;
   if (!CGRectEqualToRect(frame, border->frame)) {
@@ -237,8 +240,6 @@ void border_update_internal(struct border* border, struct settings* settings) {
 
   if (border->needs_redraw) border_draw(border, frame, settings);
 
-  CFTypeRef transaction = SLSTransactionCreate(cid);
-  if(!transaction) return;
   SLSTransactionMoveWindowWithGroup(transaction, border->wid, border->origin);
 
   if (!border->is_proxy) {
@@ -272,19 +273,6 @@ void border_update_internal(struct border* border, struct settings* settings) {
   SLSClearWindowTags(cid, border->wid, &clear_tags, 0x40);
 
   if (disabled_update) SLSReenableUpdate(cid);
-}
-
-static void* border_update_async_proc(void* context) {
-  struct {
-    struct border* border;
-    struct settings settings;
-  }* payload = context;
-
-  pthread_mutex_lock(&payload->border->mutex);
-  border_update_internal(payload->border, &payload->settings);
-  pthread_mutex_unlock(&payload->border->mutex);
-  free(payload);
-  return NULL;
 }
 
 void border_init(struct border* border, int cid) {
@@ -352,30 +340,10 @@ void border_move(struct border* border) {
   });
 }
 
-void border_update(struct border* border, bool try_async) {
+// A scan may lend its current iterator row for the duration of this synchronous update.
+void border_update(struct border* border, CFTypeRef iterator) {
   pthread_mutex_lock(&border->mutex);
-  struct settings* settings = border_get_settings(border);
-  border_update_internal(border, settings);
-  pthread_mutex_unlock(&border->mutex);
-  return;
-
-  if (!border->wid || !try_async) {
-    border_update_internal(border, settings);
-    pthread_mutex_unlock(&border->mutex);
-    return;
-  }
-
-  struct payload {
-    struct border* border;
-    struct settings settings;
-  }* payload = malloc(sizeof(struct payload));
-
-  payload->border = border;
-  payload->settings = *settings;
-
-  pthread_t thread;
-  pthread_create(&thread, NULL, border_update_async_proc, payload);
-  pthread_detach(thread);
+  border_update_internal(border, border_get_settings(border), iterator);
   pthread_mutex_unlock(&border->mutex);
 }
 

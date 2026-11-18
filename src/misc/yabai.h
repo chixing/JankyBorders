@@ -12,7 +12,7 @@
 // Additional border interfaces needed for the yabai integration
 void border_init(struct border* border, int cid);
 void border_create_window(struct border* border, CGRect frame, bool unmanaged, bool hidpi);
-void border_update_internal(struct border* border, struct settings* settings);
+void border_update_internal(struct border* border, struct settings* settings, CFTypeRef iterator);
 
 struct track_transform_payload {
   int cid;
@@ -87,7 +87,7 @@ static void* yabai_proxy_begin_proc(void* context) {
   if (!proxy->is_proxy) {
     proxy->is_proxy = true;
     proxy->frame = CGRectNull;
-    border_update_internal(proxy, &info->settings);
+    border_update_internal(proxy, &info->settings, NULL);
   }
 
   CFTypeRef transaction = SLSTransactionCreate(proxy->cid);
@@ -114,7 +114,7 @@ static void* yabai_proxy_end_proc(void* context) {
   pthread_mutex_lock(&border->mutex);
   border->event_buffer.disable_coalescing = true;
   border->external_proxy_wid = 0;
-  border_update_internal(border, &info->settings);
+  border_update_internal(border, &info->settings, NULL);
   border->event_buffer.disable_coalescing = false;
   pthread_mutex_unlock(&border->mutex);
   free(context);
