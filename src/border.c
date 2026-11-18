@@ -194,8 +194,13 @@ void border_update_internal(struct border* border, struct settings* settings) {
 
   uint64_t tags = window_tags(cid, border->target_wid);
   border->sticky = tags & WINDOW_TAG_STICKY;
-  if (!border->sticky && !is_space_visible(cid, border->sid)) return;
+  // Release the old outline before its Space can become visible again.
+  if (border_is_invisible(border, settings)) {
+    border_destroy_window(border);
+    return;
+  }
 
+  if (!border->sticky && !is_space_visible(cid, border->sid)) return;
 
   bool shown = false;
   SLSWindowIsOrderedIn(cid, border->target_wid, &shown);
@@ -203,11 +208,6 @@ void border_update_internal(struct border* border, struct settings* settings) {
     border_hide(border);
     return;
   } 
-
-  if (border_is_invisible(border, settings)) {
-    border_destroy_window(border);
-    return;
-  }
 
   int level = window_level(cid, border->target_wid);
   int sub_level = window_sub_level(cid, border->target_wid);
