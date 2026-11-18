@@ -3,6 +3,7 @@
 #include "windows.h"
 #include "border.h"
 #include "misc/window.h"
+#include <time.h>
 
 extern struct table g_windows;
 extern pid_t g_pid;
@@ -55,6 +56,46 @@ static void window_spawn_handler(uint32_t event, struct window_spawn_data* data,
   }
 }
 
+// Keep the first requested check and the latest settling deadline in each burst.
+// All timer state is owned by the main queue.
+static dispatch_source_t focus_timer;
+static uint64_t next_focus_check;
+static uint64_t last_focus_check;
+
+static void arm_focus_timer(uint64_t deadline, uint64_t now) {
+  next_focus_check = deadline;
+  int64_t delay = deadline > now ? (int64_t)(deadline - now) : 0;
+  dispatch_source_set_timer(focus_timer, dispatch_time(DISPATCH_TIME_NOW, delay),
+                            DISPATCH_TIME_FOREVER, 0);
+}
+
+static void request_focus_check(unsigned delay_ms) {
+  uint64_t deadline = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + delay_ms * NSEC_PER_MSEC;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (deadline > last_focus_check) last_focus_check = deadline;
+    if (!next_focus_check || deadline < next_focus_check) {
+      arm_focus_timer(deadline, clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
+    }
+  });
+}
+
+static void focus_timer_fired(void) {
+  if (!next_focus_check) return;
+  uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+  if (now < next_focus_check) {
+    arm_focus_timer(next_focus_check, now);
+    return;
+  }
+
+  if (last_focus_check > now) {
+    arm_focus_timer(last_focus_check, now);
+  } else {
+    next_focus_check = 0;
+    last_focus_check = 0;
+  }
+  windows_determine_and_focus_active_window(&g_windows);
+}
+
 static void window_modify_handler(uint32_t event, uint32_t* window_id, size_t _, int cid) {
   uint32_t wid = *window_id;
   struct table* windows = &g_windows;
@@ -70,17 +111,13 @@ static void window_modify_handler(uint32_t event, uint32_t* window_id, size_t _,
   } else if (event == EVENT_WINDOW_REORDER) {
     debug("Window Reorder (and focus): %d\n", wid);
     windows_window_update(windows, wid);
-    DELAY_ASYNC_EXEC_ON_MAIN_THREAD(10000, {
-      windows_determine_and_focus_active_window(windows);
-    });
+    request_focus_check(10);
   } else if (event == EVENT_WINDOW_LEVEL) {
     debug("Window Level: %d\n", wid);
     windows_window_update(windows, wid);
   } else if (event == EVENT_WINDOW_TITLE || event == EVENT_WINDOW_UPDATE) {
     debug("Window Focus\n");
-    DELAY_ASYNC_EXEC_ON_MAIN_THREAD(50000, {
-      windows_determine_and_focus_active_window(windows);
-    });
+    request_focus_check(50);
   } else if (event == EVENT_WINDOW_UNHIDE) {
     debug("Window Unhide: %d\n", wid);
     windows_window_unhide(windows, wid);
@@ -95,19 +132,21 @@ static void window_modify_handler(uint32_t event, uint32_t* window_id, size_t _,
 
 static void front_app_handler() {
   debug("Window Focus\n");
-  DELAY_ASYNC_EXEC_ON_MAIN_THREAD(50000, {
-    windows_determine_and_focus_active_window(&g_windows);
-  });
+  request_focus_check(50);
 }
 
 static void space_handler() {
   // Not all native-fullscreen windows have yet updated their space id...
-  DELAY_ASYNC_EXEC_ON_MAIN_THREAD(20000, {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
     windows_draw_borders_on_current_spaces(&g_windows);
   });
 }
 
 void events_register(int cid) {
+  focus_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+  dispatch_source_set_event_handler(focus_timer, ^{ focus_timer_fired(); });
+  dispatch_resume(focus_timer);
+
   void* cid_ctx = (void*)(intptr_t)cid;
 
   SLSRegisterNotifyProc(window_modify_handler, EVENT_WINDOW_CLOSE, cid_ctx);
